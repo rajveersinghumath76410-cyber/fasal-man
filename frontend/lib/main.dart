@@ -22,11 +22,6 @@ Future<Map<String, dynamic>> assessOnionPhoto(
 }) async {
   final uri = Uri.parse('$fasalManApiBaseUrl/api/v1/assess-onion');
 
-  debugPrint(
-    'FASAL_MAN_API: starting request '
-    'path=${photo.path} averageSizeMm=$averageSizeMm',
-  );
-
   final request = http.MultipartRequest('POST', uri);
   request.files.add(
     await http.MultipartFile.fromPath(
@@ -36,26 +31,14 @@ Future<Map<String, dynamic>> assessOnionPhoto(
   );
 
   if (averageSizeMm != null) {
-    request.fields['average_size_mm'] =
-        averageSizeMm.toStringAsFixed(1);
+    request.fields['average_size_mm'] = averageSizeMm.toStringAsFixed(1);
   }
-
-  debugPrint('FASAL_MAN_API: sending POST $uri');
 
   final response = await request.send().timeout(
     const Duration(seconds: 90),
   );
 
-  debugPrint(
-    'FASAL_MAN_API: response received '
-    'status=${response.statusCode}',
-  );
-
   final body = await response.stream.bytesToString();
-
-  debugPrint(
-    'FASAL_MAN_API: response body length=${body.length}',
-  );
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     String message = 'Backend returned HTTP ${response.statusCode}.';
@@ -70,24 +53,14 @@ Future<Map<String, dynamic>> assessOnionPhoto(
       }
     } catch (_) {}
 
-    debugPrint('FASAL_MAN_API: HTTP error: $message');
     throw Exception(message);
   }
 
   final decoded = jsonDecode(body);
 
   if (decoded is! Map<String, dynamic>) {
-    debugPrint('FASAL_MAN_API: invalid JSON response type');
     throw Exception('Invalid response received from the backend.');
   }
-
-  debugPrint(
-    'FASAL_MAN_API: decoded '
-    'success=${decoded['success']} '
-    'valid_image=${decoded['valid_image']} '
-    'error_type=${decoded['error_type']} '
-    'message=${decoded['message']}',
-  );
 
   // The backend can deliberately reject a non-onion image.
   // Return that response to the UI so it can show a clear user message
@@ -95,9 +68,6 @@ Future<Map<String, dynamic>> assessOnionPhoto(
   if (decoded['success'] != true) {
     if (decoded['error_type']?.toString() == 'INVALID_IMAGE' ||
         decoded['valid_image'] == false) {
-      debugPrint(
-        'FASAL_MAN_API: backend rejected image as INVALID_IMAGE',
-      );
       return decoded;
     }
 
@@ -106,12 +76,6 @@ Future<Map<String, dynamic>> assessOnionPhoto(
           'The onion quality assessment was not successful.',
     );
   }
-
-  debugPrint(
-    'FASAL_MAN_API: returning successful result '
-    'success=${decoded['success']} '
-    'valid_image=${decoded['valid_image']}',
-  );
 
   return decoded;
 }
@@ -137,6 +101,7 @@ class AppState extends ChangeNotifier {
   bool darkMode = false;
   String language = 'English';
   bool profileCompleted = false;
+  bool demoMode = true;
 
   SharedPreferences? _prefs;
 
@@ -149,6 +114,7 @@ class AppState extends ChangeNotifier {
     darkMode = _prefs?.getBool('darkMode') ?? false;
     language = _prefs?.getString('language') ?? 'English';
     profileCompleted = _prefs?.getBool('profileCompleted') ?? false;
+    demoMode = _prefs?.getBool('demoMode') ?? true;
 
     notifyListeners();
   }
@@ -196,6 +162,12 @@ class AppState extends ChangeNotifier {
 
     await _prefs?.setString('language', value);
 
+    notifyListeners();
+  }
+
+  Future<void> setDemoMode(bool value) async {
+    demoMode = value;
+    await _prefs?.setBool('demoMode', value);
     notifyListeners();
   }
 
@@ -1148,341 +1120,6 @@ class _ProfileSetupPageState extends State<ProfileSetupPage> {
 }
 
 /* ============================================================
-   CHAT + ALERTS
-   ============================================================ */
-
-class _ChatMessage {
-  final String text;
-  final bool isUser;
-
-  _ChatMessage({
-    required this.text,
-    required this.isUser,
-  });
-}
-
-class ChatPage extends StatefulWidget {
-  const ChatPage({super.key});
-
-  @override
-  State<ChatPage> createState() => _ChatPageState();
-}
-
-class _ChatPageState extends State<ChatPage> {
-  final TextEditingController _controller = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
-
-  final List<_ChatMessage> _messages = [];
-
-  bool _welcomeAdded = false;
-  bool _typing = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    // Safe place to use tr(context,...).
-    if (!_welcomeAdded) {
-      _messages.add(
-        _ChatMessage(
-          text: tr(context, 'chat_welcome'),
-          isUser: false,
-        ),
-      );
-
-      _welcomeAdded = true;
-    }
-  }
-
-  void _send() {
-    final text = _controller.text.trim();
-
-    if (text.isEmpty || _typing) return;
-
-    setState(() {
-      _messages.add(
-        _ChatMessage(
-          text: text,
-          isUser: true,
-        ),
-      );
-
-      _controller.clear();
-      _typing = true;
-    });
-
-    _scrollToBottom();
-
-    Future.delayed(
-      const Duration(milliseconds: 800),
-      () {
-        if (!mounted) return;
-
-        setState(() {
-          _typing = false;
-          _messages.add(
-            _ChatMessage(
-              text:
-                  'Based on your question, please check the affected crop carefully. For the demo, you can also use Detect Disease to scan a crop image.',
-              isUser: false,
-            ),
-          );
-        });
-
-        _scrollToBottom();
-      },
-    );
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
-      );
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(tr(context, 'chat_title')),
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(16),
-                itemCount: _messages.length + (_typing ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (_typing && index == _messages.length) {
-                    return Align(
-                      alignment: Alignment.centerLeft,
-                      child: Card(
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 13,
-                          ),
-                          child: SizedBox(
-                            width: 38,
-                            child: LinearProgressIndicator(),
-                          ),
-                        ),
-                      ),
-                    );
-                  }
-
-                  final message = _messages[index];
-
-                  return Align(
-                    alignment: message.isUser
-                        ? Alignment.centerRight
-                        : Alignment.centerLeft,
-                    child: Container(
-                      constraints: BoxConstraints(
-                        maxWidth:
-                            MediaQuery.of(context).size.width * 0.78,
-                      ),
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 15,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: message.isUser
-                            ? Theme.of(context)
-                                .colorScheme
-                                .primary
-                            : Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Text(
-                        message.text,
-                        style: TextStyle(
-                          color: message.isUser
-                              ? Colors.white
-                              : null,
-                          height: 1.35,
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.fromLTRB(
-                12,
-                8,
-                12,
-                10,
-              ),
-              decoration: BoxDecoration(
-                color: Theme.of(context).scaffoldBackgroundColor,
-                boxShadow: [
-                  BoxShadow(
-                    blurRadius: 8,
-                    color: Colors.black.withValues(alpha: 0.06),
-                  ),
-                ],
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _send(),
-                      minLines: 1,
-                      maxLines: 4,
-                      decoration: InputDecoration(
-                        hintText: tr(context, 'chat_hint'),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 13,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _typing ? null : _send,
-                    icon: const Icon(Icons.send),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/* ============================================================
-   ALERTS
-   ============================================================ */
-
-class AlertsPage extends StatelessWidget {
-  const AlertsPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(tr(context, 'alerts_title')),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(18),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(11),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.14),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.cloud_outlined,
-                      color: Colors.orange,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Weather Watch',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          'Keep monitoring field conditions and avoid unnecessary leaf wetness.',
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(11),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primaryContainer,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.eco_outlined,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .primary,
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Crop Monitoring',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          'Regularly inspect leaves for spots, discoloration and other changes.',
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-
-/* ============================================================
    HOME
    ============================================================ */
 
@@ -2298,6 +1935,20 @@ class SettingsPage extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Card(
+            child: SwitchListTile(
+              secondary: const Icon(Icons.science_outlined),
+              title: const Text('Prototype Demo Mode'),
+              subtitle: Text(
+                state.demoMode
+                    ? 'Local results — backend not required'
+                    : 'Uses FastAPI backend for analysis',
+              ),
+              value: state.demoMode,
+              onChanged: (value) => state.setDemoMode(value),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Card(
             child: ListTile(
               leading: const Icon(Icons.language),
               title: Text(tr(context, 'language')),
@@ -2337,6 +1988,59 @@ class SettingsPage extends StatelessWidget {
       ),
     );
   }
+}
+
+/* ============================================================
+   LOCAL PROTOTYPE DEMO RESULT
+   ============================================================ */
+
+Map<String, dynamic> buildDemoOnionResult({
+  double? averageSizeMm,
+  int index = 0,
+}) {
+  final size = averageSizeMm ?? 60.0;
+  final category = size < 10
+      ? 'Below A'
+      : size <= 20
+          ? 'A'
+          : size <= 40
+              ? 'B'
+              : size <= 70
+                  ? 'C'
+                  : 'D';
+
+  return {
+    'success': true,
+    'valid_image': true,
+    'assessment_id': 'FM-DEMO-${(index + 1).toString().padLeft(2, '0')}',
+    'assessment': {
+      'grade': 'Class I',
+      'quality_score': 83.9,
+      'confidence': 0.81,
+      'summary': 'Prototype local onion quality assessment for demonstration.',
+      'parameters': {
+        'visible_onions': {'count': 1},
+        'shape': {'average_circularity': 0.776},
+        'colour_uniformity': {'score': 59.1},
+        'visible_defects': {'dark_area_percent': 0.15},
+        'sprouting': {'green_area_percent': 0.0},
+        'firmness': {'status': 'Not assessable from photo'},
+        'internal_defects': {'status': 'Not assessable from photo'},
+        'size': {
+          'provided': true,
+          'average_diameter_mm': size,
+          'size_category': category,
+        },
+      },
+      'limitations': [
+        'Prototype demo result generated locally in the APK.',
+        'Firmness cannot be reliably confirmed from an external photo.',
+        'Internal defects cannot be reliably confirmed from an external photo.',
+        'Physical size is user-provided and reported separately from the visual quality grade.',
+        'This prototype result is not an official grading certification.',
+      ],
+    },
+  };
 }
 
 /* ============================================================
@@ -2419,17 +2123,7 @@ class _PreviewPageState extends State<PreviewPage> {
   }
 
   Future<void> _analyze() async {
-    debugPrint(
-      'FASAL_MAN_ANALYZE: entered _analyze '
-      'photos=${_photos.length} analyzing=$_analyzing',
-    );
-
     if (_photos.isEmpty || _analyzing) {
-      debugPrint(
-        'FASAL_MAN_ANALYZE: stopped before request '
-        'photosEmpty=${_photos.isEmpty} alreadyAnalyzing=$_analyzing',
-      );
-
       if (_photos.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -2440,18 +2134,12 @@ class _PreviewPageState extends State<PreviewPage> {
       return;
     }
 
+    // Validate the optional size before starting the loading state.
     final sizeText = _averageSizeController.text.trim();
-    final averageSizeMm =
-        sizeText.isEmpty ? null : double.tryParse(sizeText);
+    final averageSizeMm = sizeText.isEmpty ? null : double.tryParse(sizeText);
 
     if (sizeText.isNotEmpty &&
-        (averageSizeMm == null ||
-            averageSizeMm <= 0 ||
-            averageSizeMm > 300)) {
-      debugPrint(
-        'FASAL_MAN_ANALYZE: invalid average size input "$sizeText"',
-      );
-
+        (averageSizeMm == null || averageSizeMm <= 0 || averageSizeMm > 300)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -2468,29 +2156,31 @@ class _PreviewPageState extends State<PreviewPage> {
       _currentPhoto = 0;
     });
 
-    debugPrint(
-      'FASAL_MAN_ANALYZE: analyzing=true '
-      'photos=${_photos.length}',
-    );
-
     final results = <Map<String, dynamic>>[];
+    final demoMode = AppScope.of(context).demoMode;
 
     try {
-      for (int i = 0; i < _photos.length; i++) {
-        if (!mounted) {
-          debugPrint(
-            'FASAL_MAN_ANALYZE: widget unmounted before photo ${i + 1}',
-          );
-          return;
+      if (demoMode) {
+        // Fully offline prototype path. No HTTP request is made.
+        debugPrint('FASAL_MAN_DEMO: local analysis started');
+        for (int i = 0; i < _photos.length; i++) {
+          if (!mounted) return;
+          setState(() => _currentPhoto = i + 1);
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          results.add(buildDemoOnionResult(
+            averageSizeMm: averageSizeMm,
+            index: i,
+          ));
         }
+      } else {
+      // The FastAPI endpoint accepts one image per request.
+      // The optional average bulb diameter is sent with every photo.
+      for (int i = 0; i < _photos.length; i++) {
+        if (!mounted) return;
 
         setState(() {
           _currentPhoto = i + 1;
         });
-
-        debugPrint(
-          'FASAL_MAN_ANALYZE: analyzing photo ${i + 1}/${_photos.length}',
-        );
 
         final result = await assessOnionPhoto(
           _photos[i],
@@ -2498,58 +2188,29 @@ class _PreviewPageState extends State<PreviewPage> {
         );
 
         debugPrint(
-          'FASAL_MAN_ANALYZE: response received, '
-          'photo=${i + 1} '
-          'success=${result['success']} '
+          'FASAL_MAN_ANALYZE: response received, checking validity',
+        );
+        debugPrint(
+          'FASAL_MAN_ANALYZE: result success=${result['success']} '
           'valid_image=${result['valid_image']} '
           'error_type=${result['error_type']}',
         );
 
-        debugPrint(
-          'FASAL_MAN_ANALYZE: checking invalid-image condition',
-        );
-
-        final isInvalidImage =
-            result['valid_image'] == false ||
-            result['error_type']?.toString() == 'INVALID_IMAGE';
-
-        debugPrint(
-          'FASAL_MAN_ANALYZE: isInvalidImage=$isInvalidImage',
-        );
-
-        if (isInvalidImage) {
-          if (!mounted) {
-            debugPrint(
-              'FASAL_MAN_ANALYZE: widget unmounted before invalid dialog',
-            );
-            return;
-          }
-
-          debugPrint(
-            'FASAL_MAN_ANALYZE: invalid image detected; '
-            'stopping analysis',
-          );
+        // Stop immediately if the backend says this is not an onion image.
+        if (result['valid_image'] == false ||
+            result['error_type']?.toString() == 'INVALID_IMAGE') {
+          if (!mounted) return;
 
           setState(() {
             _analyzing = false;
           });
 
-          debugPrint(
-            'FASAL_MAN_ANALYZE: analyzing set to false '
-            'for invalid image',
-          );
-
           final message = result['message']?.toString() ??
               'This image does not appear to contain an onion.';
 
-          debugPrint(
-            'FASAL_MAN_ANALYZE: about to show invalid-image dialog',
-          );
-
           await showDialog<void>(
             context: context,
-            barrierDismissible: false,
-            builder: (dialogContext) {
+            builder: (context) {
               return AlertDialog(
                 title: const Row(
                   children: [
@@ -2565,7 +2226,7 @@ class _PreviewPageState extends State<PreviewPage> {
                 ),
                 actions: [
                   FilledButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    onPressed: () => Navigator.pop(context),
                     child: const Text('OK'),
                   ),
                 ],
@@ -2573,69 +2234,59 @@ class _PreviewPageState extends State<PreviewPage> {
             },
           );
 
-          debugPrint(
-            'FASAL_MAN_ANALYZE: invalid-image dialog closed',
-          );
-
           return;
         }
 
-        debugPrint(
-          'FASAL_MAN_ANALYZE: adding result to results list',
-        );
-
+        debugPrint('FASAL_MAN_ANALYZE: adding result to results list');
         results.add(result);
-
         debugPrint(
-          'FASAL_MAN_ANALYZE: result added, '
-          'results.length=${results.length}',
+          'FASAL_MAN_ANALYZE: result added, results.length=${results.length}',
         );
       }
-
-      if (!mounted) {
-        debugPrint(
-          'FASAL_MAN_ANALYZE: widget unmounted before final setState',
-        );
-        return;
       }
 
       debugPrint(
-        'FASAL_MAN_ANALYZE: all requests completed, '
-        'results.length=${results.length}',
+        'FASAL_MAN_ANALYZE: all photos processed, results.length=${results.length}',
       );
+
+      if (!mounted) {
+        debugPrint(
+          'FASAL_MAN_ANALYZE: widget is no longer mounted; stopping before navigation',
+        );
+        return;
+      }
 
       setState(() {
         _analyzing = false;
       });
 
-      debugPrint(
-        'FASAL_MAN_ANALYZE: analyzing set to false',
-      );
+      debugPrint('FASAL_MAN_ANALYZE: analyzing set to false');
+      debugPrint('FASAL_MAN_ANALYZE: about to navigate to result page');
 
-      debugPrint(
-        'FASAL_MAN_ANALYZE: about to navigate to result page '
-        'photos=${_photos.length} results=${results.length}',
-      );
-
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => OnionQualityResultPage(
-            photos: List<XFile>.from(_photos),
-            results: List<Map<String, dynamic>>.from(results),
+      try {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => OnionQualityResultPage(
+              photos: List<XFile>.from(_photos),
+              results: results,
+            ),
           ),
-        ),
-      );
+        );
 
-      debugPrint(
-        'FASAL_MAN_ANALYZE: Navigator.push completed',
-      );
+        debugPrint('FASAL_MAN_ANALYZE: Navigator.push completed');
+      } catch (navigationError, navigationStack) {
+        debugPrint(
+          'FASAL_MAN_ANALYZE: NAVIGATION ERROR: $navigationError',
+        );
+        debugPrint(
+          'FASAL_MAN_ANALYZE: NAVIGATION STACK: $navigationStack',
+        );
+        rethrow;
+      }
     } catch (e, stackTrace) {
-      debugPrint(
-        'FASAL_MAN_ANALYZE: ERROR: $e',
-      );
-      debugPrint(
-        'FASAL_MAN_ANALYZE: STACK TRACE:\n$stackTrace',
-      );
+      debugPrint('FASAL_MAN_ANALYZE: ERROR: $e');
+      debugPrint('FASAL_MAN_ANALYZE: STACK TRACE: $stackTrace');
 
       if (!mounted) return;
 
@@ -2643,15 +2294,12 @@ class _PreviewPageState extends State<PreviewPage> {
         _analyzing = false;
       });
 
-      debugPrint(
-        'FASAL_MAN_ANALYZE: analyzing set to false after exception',
-      );
+      debugPrint('FASAL_MAN_ANALYZE: analyzing reset after error');
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Assessment failed: '
-            '${e.toString().replaceFirst('Exception: ', '')}',
+            'Assessment failed: ${e.toString().replaceFirst('Exception: ', '')}',
           ),
           duration: const Duration(seconds: 5),
         ),
@@ -4193,3 +3841,337 @@ class _Bullet extends StatelessWidget {
 /* ============================================================
    SOIL ADVISOR
    ============================================================ */
+
+/* ============================================================
+   CHAT
+   ============================================================ */
+
+class _ChatMessage {
+  final String text;
+  final bool isUser;
+
+  _ChatMessage({
+    required this.text,
+    required this.isUser,
+  });
+}
+
+class ChatPage extends StatefulWidget {
+  const ChatPage({super.key});
+
+  @override
+  State<ChatPage> createState() => _ChatPageState();
+}
+
+class _ChatPageState extends State<ChatPage> {
+  final TextEditingController _controller = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+
+  final List<_ChatMessage> _messages = [];
+
+  bool _welcomeAdded = false;
+  bool _typing = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Safe place to use tr(context,...).
+    if (!_welcomeAdded) {
+      _messages.add(
+        _ChatMessage(
+          text: tr(context, 'chat_welcome'),
+          isUser: false,
+        ),
+      );
+
+      _welcomeAdded = true;
+    }
+  }
+
+  void _send() {
+    final text = _controller.text.trim();
+
+    if (text.isEmpty || _typing) return;
+
+    setState(() {
+      _messages.add(
+        _ChatMessage(
+          text: text,
+          isUser: true,
+        ),
+      );
+
+      _controller.clear();
+      _typing = true;
+    });
+
+    _scrollToBottom();
+
+    Future.delayed(
+      const Duration(milliseconds: 800),
+      () {
+        if (!mounted) return;
+
+        setState(() {
+          _typing = false;
+          _messages.add(
+            _ChatMessage(
+              text:
+                  'Based on your question, please check the affected crop carefully. For the demo, you can also use Detect Disease to scan a crop image.',
+              isUser: false,
+            ),
+          );
+        });
+
+        _scrollToBottom();
+      },
+    );
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(tr(context, 'chat_title')),
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(16),
+                itemCount: _messages.length + (_typing ? 1 : 0),
+                itemBuilder: (context, index) {
+                  if (_typing && index == _messages.length) {
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: Card(
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 13,
+                          ),
+                          child: SizedBox(
+                            width: 38,
+                            child: LinearProgressIndicator(),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  final message = _messages[index];
+
+                  return Align(
+                    alignment: message.isUser
+                        ? Alignment.centerRight
+                        : Alignment.centerLeft,
+                    child: Container(
+                      constraints: BoxConstraints(
+                        maxWidth:
+                            MediaQuery.of(context).size.width * 0.78,
+                      ),
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 15,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: message.isUser
+                            ? Theme.of(context)
+                                .colorScheme
+                                .primary
+                            : Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Text(
+                        message.text,
+                        style: TextStyle(
+                          color: message.isUser
+                              ? Colors.white
+                              : null,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(
+                12,
+                8,
+                12,
+                10,
+              ),
+              decoration: BoxDecoration(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                boxShadow: [
+                  BoxShadow(
+                    blurRadius: 8,
+                    color: Colors.black.withValues(alpha: 0.06),
+                  ),
+                ],
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _send(),
+                      minLines: 1,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: tr(context, 'chat_hint'),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _typing ? null : _send,
+                    icon: const Icon(Icons.send),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/* ============================================================
+   ALERTS
+   ============================================================ */
+
+class AlertsPage extends StatelessWidget {
+  const AlertsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(tr(context, 'alerts_title')),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(18),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.14),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.cloud_outlined,
+                      color: Colors.orange,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Weather Watch',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'Keep monitoring field conditions and avoid unnecessary leaf wetness.',
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primaryContainer,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.eco_outlined,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Crop Monitoring',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'Regularly inspect leaves for spots, discoloration and other changes.',
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
